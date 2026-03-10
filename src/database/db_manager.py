@@ -111,5 +111,66 @@ class DBManager:
         self.conn.commit()
         logger.info(f"inserted {len(rows)} units for batch {batch_id}")
 
+    def get_latest_data(self) -> dict:
+        """获取最新一轮抓取的所有数据，按组织分组"""
+        # 找到最新的 fetch_time（同一轮抓取的多个 batch 时间接近）
+        row = self.conn.execute(
+            "SELECT MAX(fetch_time) FROM fetch_batches"
+        ).fetchone()
+        if not row or not row[0]:
+            return {}
+
+        latest_time = row[0]
+        # 取最近5分钟内的所有 batch（同一轮抓取）
+        batches = self.conn.execute(
+            "SELECT id, org_name, app_name, fetch_time FROM fetch_batches "
+            "WHERE fetch_time >= datetime(?, '-5 minutes') ORDER BY id",
+            (latest_time,),
+        ).fetchall()
+
+        if not batches:
+            return {}
+
+        batch_ids = [b[0] for b in batches]
+        placeholders = ",".join("?" * len(batch_ids))
+
+        result = {"batches": [], "accounts": [], "projects": [], "units": []}
+
+        for b in batches:
+            result["batches"].append({
+                "batch_id": b[0], "org_name": b[1],
+                "app_name": b[2], "fetch_time": b[3],
+            })
+
+        for row in self.conn.execute(
+            f"SELECT batch_id, account_name, account_budget, cost, daily_roi "
+            f"FROM accounts WHERE batch_id IN ({placeholders})", batch_ids,
+        ).fetchall():
+            result["accounts"].append({
+                "batch_id": row[0], "account_name": row[1],
+                "account_budget": row[2], "cost": row[3], "daily_roi": row[4],
+            })
+
+        for row in self.conn.execute(
+            f"SELECT batch_id, project_name, project_budget, cost, daily_roi, status, bid_price "
+            f"FROM projects WHERE batch_id IN ({placeholders})", batch_ids,
+        ).fetchall():
+            result["projects"].append({
+                "batch_id": row[0], "project_name": row[1],
+                "project_budget": row[2], "cost": row[3],
+                "daily_roi": row[4], "status": row[5], "bid_price": row[6],
+            })
+
+        for row in self.conn.execute(
+            f"SELECT batch_id, unit_name, cost, daily_roi, status "
+            f"FROM units WHERE batch_id IN ({placeholders})", batch_ids,
+        ).fetchall():
+            result["units"].append({
+                "batch_id": row[0], "unit_name": row[1],
+                "cost": row[2], "daily_roi": row[3], "status": row[4],
+            })
+
+        return result
+
     def close(self):
         self.conn.close()
