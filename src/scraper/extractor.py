@@ -11,15 +11,44 @@ class DataExtractor:
         self.page = page
 
     def switch_organization(self, org_name: str, app_name: str):
-        """切换组织：点击右上角组织信息区域"""
+        """切换组织：打开组织面板，搜索app名称，点击对应节点"""
         logger.info(f"switch org: {org_name} - {app_name}")
+
+        # 1. 点击右上角组织区域，打开面板
         org_btn = self.page.locator(".ebp-header-account-info").first
         org_btn.click()
         self.page.wait_for_timeout(2000)
-        self.page.get_by_text(org_name, exact=False).first.click()
-        self.page.wait_for_timeout(1000)
-        self.page.get_by_text(app_name, exact=False).first.click()
-        self.page.wait_for_timeout(5000)
+
+        # 2. 在搜索框中输入 app 名称
+        search_input = self.page.locator(
+            ".ebp-team-switch-opper-container input[placeholder*='组织名称']"
+        ).first
+        search_input.click()
+        search_input.fill(app_name)
+        self.page.wait_for_timeout(2000)
+
+        # 3. 点击搜索结果中匹配的 node-card
+        #    node-card-part-content-name 包含 app 名称
+        cards = self.page.locator(".node-card .node-card-part-content-name").all()
+        clicked = False
+        for card in cards:
+            if card.is_visible() and app_name in card.inner_text():
+                card.click()
+                clicked = True
+                break
+
+        if not clicked:
+            # fallback: 直接点包含 app_name 的文本
+            self.page.get_by_text(app_name, exact=False).first.click()
+
+        # 4. 等待页面重新加载完成
+        self.page.wait_for_timeout(3000)
+        try:
+            self.page.wait_for_selector("table.ovui-table", timeout=30000)
+            self.page.wait_for_timeout(3000)
+        except Exception:
+            logger.warning("table not found after org switch, waiting more...")
+            self.page.wait_for_timeout(10000)
         logger.info(f"switched to: {org_name} - {app_name}")
 
     def _click_tab(self, tab_name: str):
@@ -29,9 +58,10 @@ class DataExtractor:
         tab.click()
         self.page.wait_for_timeout(3000)
         try:
-            self.page.wait_for_selector("table.ovui-table tbody tr", timeout=10000)
+            self.page.wait_for_selector("table.ovui-table", timeout=15000)
+            self.page.wait_for_timeout(2000)
         except Exception:
-            logger.warning(f"tab '{tab_name}' table rows not found after click")
+            logger.warning(f"tab '{tab_name}' table not found after click")
 
     def _get_total_count(self) -> int:
         """从合计行获取总条数，如 '合计（22项）' -> 22"""
@@ -48,24 +78,30 @@ class DataExtractor:
         return 0
 
     def _extract_table_data(self) -> list[dict]:
-        """提取当前 ovui-table 表格数据，处理表头中混入合计数据的问题"""
+        """提取当前 ovui-table 表格数据，保留所有列（含隐藏列）以避免错位"""
         rows = []
         try:
             self.page.wait_for_selector("table.ovui-table", timeout=10000)
 
-            # 获取表头 - 只取真正的列名，过滤掉合计数据
+            # 获取第一行 thead tr 的所有 th，保留空列用占位名
+            header_row = self.page.query_selector("table.ovui-table thead tr")
+            if not header_row:
+                logger.warning("no thead tr found")
+                return rows
+
+            header_cells = header_row.query_selector_all("th")
             headers = []
-            header_cells = self.page.query_selector_all("table.ovui-table thead th")
-            for cell in header_cells:
+            for idx, cell in enumerate(header_cells):
                 text = cell.inner_text().strip()
-                # 表头文本可能是多行的，取第一行作为列名
                 lines = [l.strip() for l in text.split("\n") if l.strip()]
                 if lines:
                     col_name = lines[0]
-                    # 跳过合计行的数据（如 "合计（5项）"后面的数字）
+                    # 合计行的数值不作为列名，用占位
                     if re.match(r'^[\d,.%\-]+$', col_name):
-                        continue
+                        col_name = f"_summary_{idx}"
                     headers.append(col_name)
+                else:
+                    headers.append(f"_col_{idx}")
 
             logger.info(f"headers({len(headers)}): {headers}")
 
@@ -76,12 +112,9 @@ class DataExtractor:
                 if not cells:
                     continue
                 row_dict = {}
-                col_idx = 0
-                for cell in cells:
-                    text = cell.inner_text().strip()
+                for col_idx, cell in enumerate(cells):
                     if col_idx < len(headers):
-                        row_dict[headers[col_idx]] = text
-                    col_idx += 1
+                        row_dict[headers[col_idx]] = cell.inner_text().strip()
                 if row_dict and any(v for v in row_dict.values()):
                     rows.append(row_dict)
 
