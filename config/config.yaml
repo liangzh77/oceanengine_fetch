@@ -1,0 +1,23 @@
+# 主配置文件
+url: "https://business.oceanengine.com/ebp/account-manage/ad/bidding/superior/account?ebpid=1856908121600011&uuid=8d560684-a88b-4212-bfa0-9c9470cd0f00"
+
+# 组织列表
+organizations:
+  - name: "天津乾飞科技有限公司"
+    app_name: "咕友app"
+  - name: "天津乾飞科技有限公司"
+    app_name: "丝话app"
+  - name: "北京奥吟智能科技有限公司"
+    app_name: "缘话app"
+
+# 飞书 Webhook 配置
+feishu:
+  webhook_url: ""  # 填入飞书机器人 webhook 地址
+
+# 数据库路径
+database:
+  path: "data/oceanengine.db"
+
+# 浏览器上下文路径
+browser:
+  context_dir: "data/browser_context"
