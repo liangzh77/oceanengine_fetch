@@ -1,4 +1,5 @@
-"""工具2：检查规则并发送飞书通知"""
+"""工具3：检查规则并发送飞书通知"""
+import json
 import logging
 import os
 import sys
@@ -14,7 +15,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
-        logging.StreamHandler(),
+        logging.StreamHandler(sys.stderr),
         logging.FileHandler("logs/check_rules.log", encoding="utf-8"),
     ],
 )
@@ -34,12 +35,16 @@ def main():
 
     os.makedirs("logs", exist_ok=True)
 
+    output = {"status": "ok", "triggered_count": 0, "rules": []}
+
     db = DBManager(db_path)
     try:
         # 1. 获取最新一轮数据
         data = db.get_latest_data()
         if not data:
             logger.warning("no data found in database")
+            output["status"] = "no_data"
+            print(json.dumps(output, ensure_ascii=False))
             return
 
         logger.info(
@@ -53,19 +58,35 @@ def main():
         rules = load_rules()
         if not rules:
             logger.info("no enabled rules found")
+            output["status"] = "no_rules"
+            print(json.dumps(output, ensure_ascii=False))
             return
 
-        messages = run_rules(rules, data, db)
+        results = run_rules(rules, data, db)
+        output["rules"] = results
+        output["triggered_count"] = sum(1 for r in results if r["triggered"])
 
-        # 3. 发送通知
-        if messages:
-            logger.info(f"total {len(messages)} messages to send")
-            send_feishu(webhook_url, messages)
+        # 3. 发送通知（只发触发的规则）
+        all_messages = []
+        for r in results:
+            if r["triggered"]:
+                all_messages.extend(r["messages"])
+
+        if all_messages:
+            logger.info(f"total {len(all_messages)} messages to send")
+            send_feishu(webhook_url, all_messages)
         else:
             logger.info("no rules triggered, no notification")
 
+        # 4. 输出结构化结果到 stdout
+        print(json.dumps(output, ensure_ascii=False))
+
     except Exception as e:
         logger.error(f"check_rules failed: {e}", exc_info=True)
+        output["status"] = "error"
+        output["error"] = str(e)
+        print(json.dumps(output, ensure_ascii=False))
+        sys.exit(1)
     finally:
         db.close()
 

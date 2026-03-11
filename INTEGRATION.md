@@ -44,6 +44,37 @@ cd /path/to/oceanengine_fetch && python check_rules.py
 | 0 | 执行成功（无论是否触发通知） |
 | 1 | 执行失败 |
 
+stdout 输出 JSON（日志输出到 stderr），结构如下：
+
+```json
+{
+  "status": "ok",
+  "triggered_count": 1,
+  "rules": [
+    {
+      "rule": "示例：ROI为0的项目",
+      "triggered": true,
+      "messages": [
+        "项目 咕友-伊心-7R-3.10-高C 消耗=40.26元 但ROI=0",
+        "项目 咕友-伊心-每次-3.10-新 消耗=34.55元 但ROI=0"
+      ]
+    },
+    {
+      "rule": "另一条规则",
+      "triggered": false,
+      "messages": []
+    }
+  ]
+}
+```
+
+字段说明：
+- `status`: `ok` 正常 / `no_data` 数据库无数据 / `no_rules` 无启用的规则 / `error` 执行出错
+- `triggered_count`: 触发的规则数量
+- `rules[].rule`: 规则名称
+- `rules[].triggered`: 是否触发
+- `rules[].messages`: 触发说明列表。同一条规则可能因不同原因触发多次，每条 message 描述一个具体的触发情况
+
 ## 标准调用流程
 
 ```bash
