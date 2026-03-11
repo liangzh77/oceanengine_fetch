@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from datetime import datetime
 
-from src.scraper.browser import BrowserManager
+from src.scraper.browser import BrowserManager, AuthExpiredError
 from src.scraper.extractor import DataExtractor
 from src.scraper.parser import parse_accounts, parse_projects, parse_units
 from src.database.db_manager import DBManager
@@ -94,6 +94,9 @@ def main():
 
         logger.info("=== All organizations fetched successfully ===")
 
+    except AuthExpiredError as e:
+        logger.error(f"AUTH_EXPIRED: {e}")
+        sys.exit(2)
     except Exception as e:
         logger.error(f"Fetch failed: {e}", exc_info=True)
         sys.exit(1)

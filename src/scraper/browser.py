@@ -8,6 +8,11 @@ logger = logging.getLogger(__name__)
 AUTH_STATE_FILE = "auth.json"
 
 
+class AuthExpiredError(Exception):
+    """登录状态失效"""
+    pass
+
+
 class BrowserManager:
     def __init__(self, context_dir: str):
         self.context_dir = context_dir
@@ -16,12 +21,14 @@ class BrowserManager:
         self._browser: Browser = None
         self._context: BrowserContext = None
         self._page: Page = None
+        self._headless: bool = False
 
     def _has_saved_auth(self) -> bool:
         return os.path.exists(self.auth_path)
 
     def start(self, headless: bool = False) -> Page:
         """启动浏览器，返回 Page 对象"""
+        self._headless = headless
         self._playwright = sync_playwright().start()
         self._browser = self._playwright.chromium.launch(headless=headless)
 
@@ -50,7 +57,7 @@ class BrowserManager:
         return True
 
     def navigate_and_ensure_login(self, url: str, timeout: int = 300):
-        """导航到目标页面，如果 session 失效则等待人工登录"""
+        """导航到目标页面，如果 session 失效则等待人工登录或抛出异常"""
         logger.info(f"正在导航到目标页面...")
         self._page.goto(url, wait_until="domcontentloaded", timeout=60000)
         # 等待可能的重定向
@@ -61,11 +68,14 @@ class BrowserManager:
 
         if self._check_logged_in():
             logger.info("登录状态有效，已进入业务页面")
-            # 更新保存的登录状态
             self.save_auth()
             return
 
-        # session 失效，需要重新登录
+        # headless 模式下无法人工登录，直接报错
+        if self._headless:
+            raise AuthExpiredError("登录状态已失效，请先运行 python login.py 手动登录")
+
+        # 非 headless 模式，等待人工登录
         logger.warning("登录状态已失效，需要重新人工登录")
         logger.info("请在浏览器中手动登录...")
         logger.info(f"等待登录完成（最长 {timeout} 秒）...")
