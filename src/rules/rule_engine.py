@@ -46,12 +46,12 @@ def load_rules() -> list:
     return rules
 
 
-def run_rules(rules: list, data: dict) -> list[str]:
-    """执行所有规则，返回触发的消息列表"""
+def run_rules(rules: list, data: dict, db=None) -> list[str]:
+    """执行所有规则，返回触发的消息列表。db 可选，供规则查询��史数据。"""
     all_messages = []
     for rule in rules:
         try:
-            messages = rule["check"](data)
+            messages = rule["check"](data, db)
             if messages:
                 logger.info(f"rule '{rule['name']}' triggered: {len(messages)} messages")
                 all_messages.extend(messages)

@@ -27,10 +27,10 @@ class BrowserManager:
 
         if self._has_saved_auth():
             logger.info("检测到已保存的登录状态，正在恢复...")
-            self._context = self._browser.new_context(storage_state=self.auth_path)
+            self._context = self._browser.new_context(storage_state=self.auth_path, accept_downloads=True)
         else:
             logger.info("未检测到登录状态，需要人工登录")
-            self._context = self._browser.new_context()
+            self._context = self._browser.new_context(accept_downloads=True)
 
         self._page = self._context.new_page()
         return self._page

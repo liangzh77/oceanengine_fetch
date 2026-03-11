@@ -1,6 +1,9 @@
-"""数据提取模块：组织切换、表格数据抓取"""
+"""数据提取模块：组织切换、通过下载 Excel 获取表格数据"""
 import logging
-import re
+import os
+import tempfile
+
+import openpyxl
 from playwright.sync_api import Page
 
 logger = logging.getLogger(__name__)
@@ -14,12 +17,10 @@ class DataExtractor:
         """切换组织：打开组织面板，搜索app名称，点击对应节点"""
         logger.info(f"switch org: {org_name} - {app_name}")
 
-        # 1. 点击右上角组织区域，打开面板
         org_btn = self.page.locator(".ebp-header-account-info").first
         org_btn.click()
         self.page.wait_for_timeout(2000)
 
-        # 2. 在搜索框中输入 app 名称
         search_input = self.page.locator(
             ".ebp-team-switch-opper-container input[placeholder*='组织名称']"
         ).first
@@ -27,8 +28,6 @@ class DataExtractor:
         search_input.fill(app_name)
         self.page.wait_for_timeout(2000)
 
-        # 3. 点击搜索结果中匹配的 node-card
-        #    node-card-part-content-name 包含 app 名称
         cards = self.page.locator(".node-card .node-card-part-content-name").all()
         clicked = False
         for card in cards:
@@ -38,10 +37,8 @@ class DataExtractor:
                 break
 
         if not clicked:
-            # fallback: 直接点包含 app_name 的文本
             self.page.get_by_text(app_name, exact=False).first.click()
 
-        # 4. 等待页面重新加载完成
         self.page.wait_for_timeout(3000)
         try:
             self.page.wait_for_selector("table.ovui-table", timeout=30000)
@@ -63,115 +60,59 @@ class DataExtractor:
         except Exception:
             logger.warning(f"tab '{tab_name}' table not found after click")
 
-    def _get_total_count(self) -> int:
-        """从合计行获取总条数，如 '合计（22项）' -> 22"""
+    def _download_excel(self) -> list[dict]:
+        """点击下载按钮，用 Playwright download API 获取 Excel"""
+        download_btn = self.page.locator("iconpark-icon[name='oc-icon-download']").first
+        if not download_btn.is_visible():
+            logger.warning("download button not found")
+            return []
+
+        # 用 Playwright 的 expect_download 捕获下载
+        with self.page.expect_download(timeout=60000) as download_info:
+            download_btn.locator("..").click()
+
+        download = download_info.value
+        # 保存到临时文件
+        tmp_path = os.path.join(tempfile.gettempdir(), download.suggested_filename)
+        download.save_as(tmp_path)
+        logger.info(f"downloaded: {download.suggested_filename} ({os.path.getsize(tmp_path)} bytes)")
+
+        rows = self._read_excel(tmp_path)
+
         try:
-            # 找表头中包含"合计"的单元格
-            header_cells = self.page.query_selector_all("table.ovui-table thead th")
-            for cell in header_cells:
-                text = cell.inner_text().strip()
-                match = re.search(r'合计[（(](\d+)项[）)]', text)
-                if match:
-                    return int(match.group(1))
+            os.remove(tmp_path)
         except Exception:
             pass
-        return 0
 
-    def _extract_table_data(self) -> list[dict]:
-        """提取当前 ovui-table 表格数据，保留所有列（含隐藏列）以避免错位"""
-        rows = []
-        try:
-            self.page.wait_for_selector("table.ovui-table", timeout=10000)
-
-            # 获取第一行 thead tr 的所有 th，保留空列用占位名
-            header_row = self.page.query_selector("table.ovui-table thead tr")
-            if not header_row:
-                logger.warning("no thead tr found")
-                return rows
-
-            header_cells = header_row.query_selector_all("th")
-            headers = []
-            for idx, cell in enumerate(header_cells):
-                text = cell.inner_text().strip()
-                lines = [l.strip() for l in text.split("\n") if l.strip()]
-                if lines:
-                    col_name = lines[0]
-                    # 合计行的数值不作为列名，用占位
-                    if re.match(r'^[\d,.%\-]+$', col_name):
-                        col_name = f"_summary_{idx}"
-                    headers.append(col_name)
-                else:
-                    headers.append(f"_col_{idx}")
-
-            logger.info(f"headers({len(headers)}): {headers}")
-
-            # 获取数据行
-            data_rows = self.page.query_selector_all("table.ovui-table tbody tr")
-            for row in data_rows:
-                cells = row.query_selector_all("td")
-                if not cells:
-                    continue
-                row_dict = {}
-                for col_idx, cell in enumerate(cells):
-                    if col_idx < len(headers):
-                        row_dict[headers[col_idx]] = cell.inner_text().strip()
-                if row_dict and any(v for v in row_dict.values()):
-                    rows.append(row_dict)
-
-            logger.info(f"extracted {len(rows)} rows")
-        except Exception as e:
-            logger.error(f"extract table failed: {e}")
         return rows
 
-    def _extract_all_pages(self) -> list[dict]:
-        """提取所有分页的数据，通过总条数控制翻页"""
-        total = self._get_total_count()
-        logger.info(f"total count from header: {total}")
-
-        all_rows = []
-        page_num = 1
-        max_pages = max((total // 5) + 2, 3) if total > 0 else 1  # 安全上限
-
-        while page_num <= max_pages:
-            logger.info(f"extracting page {page_num}/{max_pages}...")
-            rows = self._extract_table_data()
-            all_rows.extend(rows)
-
-            # 已经拿够了
-            if total > 0 and len(all_rows) >= total:
-                break
-
-            # 尝试点下一页
-            try:
-                next_btn = self.page.locator(
-                    "[class*='pagination'] [class*='next']"
-                ).first
-                if not next_btn.is_visible():
-                    break
-                # 检查是否 disabled
-                cls = next_btn.get_attribute("class") or ""
-                if "disabled" in cls:
-                    break
-                next_btn.click()
-                self.page.wait_for_timeout(3000)
-                page_num += 1
-            except Exception:
-                break
-
-        logger.info(f"total: {len(all_rows)} rows from {page_num} pages")
-        return all_rows
+    @staticmethod
+    def _read_excel(path: str) -> list[dict]:
+        """读取 Excel 文件，返回 list[dict]，键为列名"""
+        wb = openpyxl.load_workbook(path)
+        ws = wb.active
+        headers = [cell.value for cell in ws[1]]
+        rows = []
+        for row in ws.iter_rows(min_row=2, max_row=ws.max_row, values_only=True):
+            record = {}
+            for i, value in enumerate(row):
+                if i < len(headers) and headers[i]:
+                    record[headers[i]] = value
+            if any(v for v in record.values()):
+                rows.append(record)
+        return rows
 
     def fetch_accounts(self) -> list[dict]:
         self._click_tab("账户")
-        return self._extract_all_pages()
+        return self._download_excel()
 
     def fetch_projects(self) -> list[dict]:
         self._click_tab("项目")
-        return self._extract_all_pages()
+        return self._download_excel()
 
     def fetch_units(self) -> list[dict]:
         self._click_tab("单元")
-        return self._extract_all_pages()
+        return self._download_excel()
 
     def fetch_all(self) -> dict:
         return {

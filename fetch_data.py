@@ -7,6 +7,8 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from datetime import datetime
+
 from src.scraper.browser import BrowserManager
 from src.scraper.extractor import DataExtractor
 from src.scraper.parser import parse_accounts, parse_projects, parse_units
@@ -79,10 +81,11 @@ def main():
             units = parse_units(raw_units)
 
             # Store
-            batch_id = db.create_batch(org_name, app_name)
-            db.insert_accounts(batch_id, accounts)
-            db.insert_projects(batch_id, projects)
-            db.insert_units(batch_id, units)
+            fetch_time = datetime.now().isoformat()
+            db.insert_accounts(org_name, app_name, fetch_time, accounts)
+            db.insert_projects(org_name, app_name, fetch_time, projects)
+            db.insert_units(org_name, app_name, fetch_time, units)
+            db.create_fetch_log(org_name, app_name, fetch_time, len(accounts), len(projects), len(units))
 
             logger.info(
                 f"Done: {org_name}-{app_name} | "

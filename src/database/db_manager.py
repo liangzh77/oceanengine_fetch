@@ -1,4 +1,4 @@
-"""数据库管理模块：SQLite 建表、数据写入"""
+"""数据库管理模块：SQLite 时间序列数据模型"""
 import logging
 import sqlite3
 from datetime import datetime
@@ -6,52 +6,74 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS fetch_batches (
+CREATE TABLE IF NOT EXISTS fetch_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     org_name TEXT NOT NULL,
     app_name TEXT NOT NULL,
-    fetch_time TIMESTAMP NOT NULL
+    fetch_time TEXT NOT NULL,
+    account_count INTEGER DEFAULT 0,
+    project_count INTEGER DEFAULT 0,
+    unit_count INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    batch_id INTEGER NOT NULL,
+    org_name TEXT NOT NULL,
+    app_name TEXT NOT NULL,
+    fetch_time TEXT NOT NULL,
     account_name TEXT,
+    account_id TEXT,
+    account_status TEXT,
     account_budget REAL,
     cost REAL,
     daily_roi REAL,
-    raw_data TEXT,
-    FOREIGN KEY (batch_id) REFERENCES fetch_batches(id)
+    daily_pay_amount REAL,
+    impressions REAL,
+    clicks REAL,
+    conversions REAL,
+    avg_conversion_cost REAL
 );
 
 CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    batch_id INTEGER NOT NULL,
+    org_name TEXT NOT NULL,
+    app_name TEXT NOT NULL,
+    fetch_time TEXT NOT NULL,
     project_name TEXT,
+    project_id TEXT,
+    status TEXT,
     project_budget REAL,
     cost REAL,
     daily_roi REAL,
-    status TEXT,
-    bid_price REAL,
-    raw_data TEXT,
-    FOREIGN KEY (batch_id) REFERENCES fetch_batches(id)
+    impressions REAL,
+    conversions REAL,
+    avg_conversion_cost REAL
 );
 
 CREATE TABLE IF NOT EXISTS units (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    batch_id INTEGER NOT NULL,
+    org_name TEXT NOT NULL,
+    app_name TEXT NOT NULL,
+    fetch_time TEXT NOT NULL,
     unit_name TEXT,
+    unit_id TEXT,
+    status TEXT,
     cost REAL,
     daily_roi REAL,
-    status TEXT,
-    raw_data TEXT,
-    FOREIGN KEY (batch_id) REFERENCES fetch_batches(id)
+    daily_pay_amount REAL,
+    impressions REAL,
+    clicks REAL,
+    conversions REAL,
+    avg_conversion_cost REAL
 );
 
-CREATE INDEX IF NOT EXISTS idx_accounts_batch ON accounts(batch_id);
-CREATE INDEX IF NOT EXISTS idx_projects_batch ON projects(batch_id);
-CREATE INDEX IF NOT EXISTS idx_units_batch ON units(batch_id);
-CREATE INDEX IF NOT EXISTS idx_batches_time ON fetch_batches(fetch_time);
+CREATE INDEX IF NOT EXISTS idx_accounts_ts ON accounts(account_name, fetch_time);
+CREATE INDEX IF NOT EXISTS idx_projects_ts ON projects(project_name, fetch_time);
+CREATE INDEX IF NOT EXISTS idx_units_ts ON units(unit_name, fetch_time);
+CREATE INDEX IF NOT EXISTS idx_accounts_ft ON accounts(fetch_time);
+CREATE INDEX IF NOT EXISTS idx_projects_ft ON projects(fetch_time);
+CREATE INDEX IF NOT EXISTS idx_units_ft ON units(fetch_time);
+CREATE INDEX IF NOT EXISTS idx_fetch_log_time ON fetch_log(fetch_time);
 """
 
 
@@ -67,110 +89,136 @@ class DBManager:
         self.conn.commit()
         logger.info(f"database initialized: {self.db_path}")
 
-    def create_batch(self, org_name: str, app_name: str, fetch_time: datetime = None) -> int:
-        if fetch_time is None:
-            fetch_time = datetime.now()
-        cur = self.conn.execute(
-            "INSERT INTO fetch_batches (org_name, app_name, fetch_time) VALUES (?, ?, ?)",
-            (org_name, app_name, fetch_time.isoformat()),
+    # ── 写入 ──
+
+    def insert_accounts(self, org_name: str, app_name: str, fetch_time: str, rows: list[dict]):
+        for r in rows:
+            self.conn.execute(
+                "INSERT INTO accounts (org_name, app_name, fetch_time, account_name, account_id, account_status, "
+                "account_budget, cost, daily_roi, daily_pay_amount, impressions, clicks, conversions, avg_conversion_cost) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (org_name, app_name, fetch_time, r.get("account_name"), r.get("account_id"), r.get("account_status"),
+                 r.get("account_budget"), r.get("cost"), r.get("daily_roi"), r.get("daily_pay_amount"),
+                 r.get("impressions"), r.get("clicks"), r.get("conversions"), r.get("avg_conversion_cost")),
+            )
+        self.conn.commit()
+        logger.info(f"inserted {len(rows)} accounts at {fetch_time}")
+
+    def insert_projects(self, org_name: str, app_name: str, fetch_time: str, rows: list[dict]):
+        for r in rows:
+            self.conn.execute(
+                "INSERT INTO projects (org_name, app_name, fetch_time, project_name, project_id, status, "
+                "project_budget, cost, daily_roi, impressions, conversions, avg_conversion_cost) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (org_name, app_name, fetch_time, r.get("project_name"), r.get("project_id"), r.get("status"),
+                 r.get("project_budget"), r.get("cost"), r.get("daily_roi"),
+                 r.get("impressions"), r.get("conversions"), r.get("avg_conversion_cost")),
+            )
+        self.conn.commit()
+        logger.info(f"inserted {len(rows)} projects at {fetch_time}")
+
+    def insert_units(self, org_name: str, app_name: str, fetch_time: str, rows: list[dict]):
+        for r in rows:
+            self.conn.execute(
+                "INSERT INTO units (org_name, app_name, fetch_time, unit_name, unit_id, status, "
+                "cost, daily_roi, daily_pay_amount, impressions, clicks, conversions, avg_conversion_cost) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (org_name, app_name, fetch_time, r.get("unit_name"), r.get("unit_id"), r.get("status"),
+                 r.get("cost"), r.get("daily_roi"), r.get("daily_pay_amount"),
+                 r.get("impressions"), r.get("clicks"), r.get("conversions"), r.get("avg_conversion_cost")),
+            )
+        self.conn.commit()
+        logger.info(f"inserted {len(rows)} units at {fetch_time}")
+
+    def create_fetch_log(self, org_name: str, app_name: str, fetch_time: str,
+                         account_count: int, project_count: int, unit_count: int):
+        self.conn.execute(
+            "INSERT INTO fetch_log (org_name, app_name, fetch_time, account_count, project_count, unit_count) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (org_name, app_name, fetch_time, account_count, project_count, unit_count),
         )
         self.conn.commit()
-        return cur.lastrowid
 
-    def insert_accounts(self, batch_id: int, rows: list[dict]):
-        for r in rows:
-            self.conn.execute(
-                "INSERT INTO accounts (batch_id, account_name, account_budget, cost, daily_roi, raw_data) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (batch_id, r.get("account_name"), r.get("account_budget"),
-                 r.get("cost"), r.get("daily_roi"), r.get("raw_data")),
-            )
-        self.conn.commit()
-        logger.info(f"inserted {len(rows)} accounts for batch {batch_id}")
-
-    def insert_projects(self, batch_id: int, rows: list[dict]):
-        for r in rows:
-            self.conn.execute(
-                "INSERT INTO projects (batch_id, project_name, project_budget, cost, daily_roi, status, bid_price, raw_data) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (batch_id, r.get("project_name"), r.get("project_budget"),
-                 r.get("cost"), r.get("daily_roi"), r.get("status"),
-                 r.get("bid_price"), r.get("raw_data")),
-            )
-        self.conn.commit()
-        logger.info(f"inserted {len(rows)} projects for batch {batch_id}")
-
-    def insert_units(self, batch_id: int, rows: list[dict]):
-        for r in rows:
-            self.conn.execute(
-                "INSERT INTO units (batch_id, unit_name, cost, daily_roi, status, raw_data) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (batch_id, r.get("unit_name"), r.get("cost"),
-                 r.get("daily_roi"), r.get("status"), r.get("raw_data")),
-            )
-        self.conn.commit()
-        logger.info(f"inserted {len(rows)} units for batch {batch_id}")
+    # ── 查询：最新数据（兼容规则引擎） ──
 
     def get_latest_data(self) -> dict:
-        """获取最新一轮抓取的所有数据，按组织分组"""
-        # 找到最新的 fetch_time（同一轮抓取的多个 batch 时间接近）
-        row = self.conn.execute(
-            "SELECT MAX(fetch_time) FROM fetch_batches"
-        ).fetchone()
+        """获取最近一轮抓取的所有数据"""
+        row = self.conn.execute("SELECT MAX(fetch_time) FROM fetch_log").fetchone()
         if not row or not row[0]:
             return {}
 
         latest_time = row[0]
-        # 取最近5分钟内的所有 batch（同一轮抓取）
-        batches = self.conn.execute(
-            "SELECT id, org_name, app_name, fetch_time FROM fetch_batches "
-            "WHERE fetch_time >= datetime(?, '-5 minutes') ORDER BY id",
+        # 同一轮抓取：最近5分钟内的所有 fetch_time
+        times = self.conn.execute(
+            "SELECT DISTINCT fetch_time FROM fetch_log "
+            "WHERE fetch_time >= datetime(?, '-5 minutes') ORDER BY fetch_time",
             (latest_time,),
         ).fetchall()
-
-        if not batches:
+        if not times:
             return {}
 
-        batch_ids = [b[0] for b in batches]
-        placeholders = ",".join("?" * len(batch_ids))
+        time_list = [t[0] for t in times]
+        ph = ",".join("?" * len(time_list))
 
-        result = {"batches": [], "accounts": [], "projects": [], "units": []}
+        result = {"accounts": [], "projects": [], "units": []}
 
-        for b in batches:
-            result["batches"].append({
-                "batch_id": b[0], "org_name": b[1],
-                "app_name": b[2], "fetch_time": b[3],
-            })
+        self.conn.row_factory = sqlite3.Row
+        for row in self.conn.execute(
+            f"SELECT * FROM accounts WHERE fetch_time IN ({ph})", time_list,
+        ).fetchall():
+            result["accounts"].append(dict(row))
 
         for row in self.conn.execute(
-            f"SELECT batch_id, account_name, account_budget, cost, daily_roi "
-            f"FROM accounts WHERE batch_id IN ({placeholders})", batch_ids,
+            f"SELECT * FROM projects WHERE fetch_time IN ({ph})", time_list,
         ).fetchall():
-            result["accounts"].append({
-                "batch_id": row[0], "account_name": row[1],
-                "account_budget": row[2], "cost": row[3], "daily_roi": row[4],
-            })
+            result["projects"].append(dict(row))
 
         for row in self.conn.execute(
-            f"SELECT batch_id, project_name, project_budget, cost, daily_roi, status, bid_price "
-            f"FROM projects WHERE batch_id IN ({placeholders})", batch_ids,
+            f"SELECT * FROM units WHERE fetch_time IN ({ph})", time_list,
         ).fetchall():
-            result["projects"].append({
-                "batch_id": row[0], "project_name": row[1],
-                "project_budget": row[2], "cost": row[3],
-                "daily_roi": row[4], "status": row[5], "bid_price": row[6],
-            })
+            result["units"].append(dict(row))
 
-        for row in self.conn.execute(
-            f"SELECT batch_id, unit_name, cost, daily_roi, status "
-            f"FROM units WHERE batch_id IN ({placeholders})", batch_ids,
-        ).fetchall():
-            result["units"].append({
-                "batch_id": row[0], "unit_name": row[1],
-                "cost": row[2], "daily_roi": row[3], "status": row[4],
-            })
-
+        self.conn.row_factory = None
         return result
+
+    # ── 查询：时间序列 ──
+
+    def get_time_series(self, table: str, name: str,
+                        start_time: str = None, end_time: str = None) -> list[dict]:
+        """查询某个账户/项目/单元在时间范围内的所有快照，用于绘制变化曲线"""
+        name_col = {"accounts": "account_name", "projects": "project_name", "units": "unit_name"}
+        col = name_col.get(table)
+        if not col:
+            return []
+
+        sql = f"SELECT * FROM {table} WHERE {col} = ?"
+        params = [name]
+        if start_time:
+            sql += " AND fetch_time >= ?"
+            params.append(start_time)
+        if end_time:
+            sql += " AND fetch_time <= ?"
+            params.append(end_time)
+        sql += " ORDER BY fetch_time"
+
+        self.conn.row_factory = sqlite3.Row
+        rows = self.conn.execute(sql, params).fetchall()
+        self.conn.row_factory = None
+        return [dict(r) for r in rows]
+
+    def get_all_fetch_times(self, date: str = None) -> list[str]:
+        """查询所有抓取时间点，可选按日期过滤（格式 '2026-03-10'）"""
+        if date:
+            rows = self.conn.execute(
+                "SELECT DISTINCT fetch_time FROM fetch_log "
+                "WHERE fetch_time LIKE ? ORDER BY fetch_time",
+                (f"{date}%",),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT DISTINCT fetch_time FROM fetch_log ORDER BY fetch_time"
+            ).fetchall()
+        return [r[0] for r in rows]
 
     def close(self):
         self.conn.close()

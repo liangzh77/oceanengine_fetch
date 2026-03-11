@@ -55,7 +55,7 @@ def main():
             logger.info("no enabled rules found")
             return
 
-        messages = run_rules(rules, data)
+        messages = run_rules(rules, data, db)
 
         # 3. 发送通知
         if messages:

@@ -1,5 +1,9 @@
 __pycache__/
 *.pyc
 data/browser_context/
+data/chrome_debug/
+data/downloads/
 data/*.db
+data/*.db-wal
+data/*.db-shm
 logs/
