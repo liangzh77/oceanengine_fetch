@@ -1,0 +1,10 @@
+{
+  "cost_roi_monitor": {
+    "file": "cost_roi_monitor.py",
+    "name": "消耗与ROI监控规则",
+    "enabled": true,
+    "description": "消耗<2000忽略；消耗>=2000且ROI<0.09提醒限额到4000；已限额账户消耗占比>=80%且ROI达标时提醒放量",
+    "created_at": "2026-03-11T22:55:00",
+    "updated_at": "2026-03-11T22:55:00"
+  }
+}
