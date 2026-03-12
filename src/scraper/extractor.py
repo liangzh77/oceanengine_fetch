@@ -67,8 +67,8 @@ class DataExtractor:
             logger.warning("download button not found")
             return []
 
-        # 用 Playwright 的 expect_download 捕获下载
-        with self.page.expect_download(timeout=60000) as download_info:
+        # 用 Playwright 的 expect_download 捕获下载（数据量大时增加超时）
+        with self.page.expect_download(timeout=120000) as download_info:
             download_btn.locator("..").click()
 
         download = download_info.value
