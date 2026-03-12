@@ -11,7 +11,7 @@ from src.scraper.browser import BrowserManager
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler()],
+    handlers=[logging.StreamHandler(stream=open(sys.stderr.fileno(), mode='w', encoding='utf-8', buffering=1))],
 )
 logger = logging.getLogger(__name__)
 
