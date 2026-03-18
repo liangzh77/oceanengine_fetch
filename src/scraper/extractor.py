@@ -48,6 +48,68 @@ class DataExtractor:
             self.page.wait_for_timeout(10000)
         logger.info(f"switched to: {org_name} - {app_name}")
 
+    def set_date_filter(self, target_date: str):
+        """设置日期筛选器，起止日期均设为 target_date（YYYY-MM-DD）"""
+        logger.info(f"设置日期筛选器: {target_date}")
+
+        # 点击开始日期输入框，打开日历
+        self.page.locator("input[placeholder*='开始日期']").first.click()
+        self.page.wait_for_timeout(800)
+
+        # 选开始日期
+        self._pick_date(target_date)
+        self.page.wait_for_timeout(400)
+
+        # 日历自动切换到结束日期，选同一天
+        self._pick_date(target_date)
+        self.page.wait_for_timeout(800)
+
+        logger.info(f"日期筛选器已设置: {target_date}")
+
+    def _pick_date(self, target_date: str):
+        """在已打开的日历中点击指定日期（title=YYYY-MM-DD），必要时翻月"""
+        popper_sel = ".ovui-range-picker__popper--show"
+        prev_btn_sel = ".ovui-date__header-prev-month"
+        next_btn_sel = ".ovui-date__header-next-month"
+
+        for _ in range(24):
+            # 先尝试直接点击目标日期单元格
+            cell = self.page.locator(f'{popper_sel} td[title="{target_date}"]').first
+            if cell.is_visible():
+                cell.click()
+                return
+
+            # 判断需要往前还是往后翻月
+            # 读取当前日历第一个面板显示的年月
+            cur_ym = self.page.evaluate(f"""
+                () => {{
+                    const popper = document.querySelector('{popper_sel}');
+                    if (!popper) return null;
+                    const header = popper.querySelector('.ovui-date__header');
+                    if (!header) return null;
+                    const spans = header.querySelectorAll('span');
+                    for (const s of spans) {{
+                        const m = s.textContent.match(/(\\d{{4}}).*?(\\d{{1,2}})/);
+                        if (m) return [parseInt(m[1]), parseInt(m[2])];
+                    }}
+                    return null;
+                }}
+            """)
+            if not cur_ym:
+                logger.warning("无法读取日历年月，跳过翻月")
+                break
+
+            from datetime import datetime
+            target_dt = datetime.strptime(target_date, "%Y-%m-%d")
+            cur_year, cur_month = cur_ym
+            if (cur_year, cur_month) > (target_dt.year, target_dt.month):
+                self.page.locator(f"{popper_sel} {prev_btn_sel}").first.click()
+            else:
+                self.page.locator(f"{popper_sel} {next_btn_sel}").last.click()
+            self.page.wait_for_timeout(300)
+
+        logger.warning(f"未能在日历中找到日期: {target_date}")
+
     def _click_tab(self, tab_name: str):
         """点击指定的 tab 页（账户/项目/单元）"""
         logger.info(f"click tab: {tab_name}")
@@ -112,7 +174,17 @@ class DataExtractor:
 
     def fetch_units(self) -> list[dict]:
         self._click_tab("单元")
-        return self._download_excel()
+        rows = self._download_excel()
+        if rows:
+            # 临时日志：打印单元的列名和前几行的状态值
+            logger.info(f"单元Excel列名: {list(rows[0].keys())}")
+            status_vals = set()
+            for r in rows:
+                for k, v in r.items():
+                    if '状态' in str(k):
+                        status_vals.add(f"{k}={v}")
+            logger.info(f"单元状态值样本: {list(status_vals)[:10]}")
+        return rows
 
     def fetch_all(self) -> dict:
         return {
