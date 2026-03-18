@@ -1,10 +1,11 @@
-"""工具3：手动登录巨量引擎，保存登录状态供 headless 抓取使用"""
+"""手动登录巨量引擎，保存登录状态供 headless 抓取使用"""
 import logging
 import os
 import sys
 import yaml
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 
 from src.scraper.browser import BrowserManager
 
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def load_config() -> dict:
-    config_path = os.path.join(os.path.dirname(__file__), "config", "config.yaml")
+    config_path = os.path.join(ROOT, "config", "config.yaml")
     with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
@@ -25,7 +26,7 @@ def load_config() -> dict:
 def main():
     config = load_config()
     url = config["url"]
-    context_dir = config["browser"]["context_dir"]
+    context_dir = os.path.join(ROOT, config["browser"]["context_dir"])
 
     browser_mgr = BrowserManager(context_dir)
 

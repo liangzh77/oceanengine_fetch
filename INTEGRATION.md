@@ -1,87 +1,133 @@
 # 巨量引擎数据抓取 - 工具使用说明
 
+所有工具位于 `tools/` 目录，从项目根目录运行。
+
 ## 工具列表
 
-### 工具1：手动登录（login.py）
+### 1. 抓取数据 `tools/fetch_data.py`
 
-打开浏览器，用户手动扫码登录巨量引擎，保存登录状态供后续 headless 抓取使用。
-
-```bash
-cd /path/to/oceanengine_fetch && python login.py
-```
-
-| 退出码 | 含义 |
-|--------|------|
-| 0 | 登录成功，状态已保存到 `data/browser_context/auth.json` |
-| 1 | 登录失败或超时（600秒） |
-
-注意：需要有显示器的环境运行，用户在浏览器中手动扫码完成登录。
-
-### 工具2：抓取数据（fetch_data.py）
-
-无头浏览器访问巨量引擎，下载各组织的账户/项目/单元 Excel 数据，解析后存入 SQLite 数据库。
+无头浏览器抓取各组织的账户/项目/单元数据，按天存入数据库（同一天重复抓取自动覆盖）。网络超时自动重试3次，每次间隔5分钟。
 
 ```bash
-cd /path/to/oceanengine_fetch && python fetch_data.py --headless
+python tools/fetch_data.py              # 抓取今天数据
+python tools/fetch_data.py --day -1     # 抓取昨天数据
+python tools/fetch_data.py --headless   # 无头模式
+python tools/fetch_data.py --login      # 强制重新登录
 ```
 
-| 退出码 | 含义 | 处理方式 |
-|--------|------|----------|
-| 0 | 抓取成功，数据已入库 | 可继续执行 check_rules.py |
-| 2 | 登录失效（AUTH_EXPIRED） | 需要调用 `python login.py` 重新登录 |
-| 1 | 其他错误 | 查看日志 `logs/fetch_data.log` 排查 |
+退出码：`0` 成功 | `1` 失败 | `2` 登录过期（需运行 login.py）
 
-### 工具3：检查规则（check_rules.py）
+stdout 输出：`SUCCESS: 2026-03-16 数据抓取完成` 或 `FAILED: 原因`
 
-读取数据库中最新一轮抓取的数据，执行 `rules/` 目录下的规则，触发的消息通过飞书 Webhook 发送通知。
+### 2. 查询数据 `tools/query_data.py`
+
+查询数据库，输出 JSON。支持按日期、产品、账户、项目、单元过滤。
 
 ```bash
-cd /path/to/oceanengine_fetch && python check_rules.py
+python tools/query_data.py                                    # 昨天全部数据
+python tools/query_data.py --day 0                            # 今天全部数据
+python tools/query_data.py --date 2026-03-15                  # 指定日期
+python tools/query_data.py --day -1 --products 缘话app        # 按产品过滤
+python tools/query_data.py --day -1 --table accounts          # 只看账户
+python tools/query_data.py --accounts 测试                     # 按账户名模糊匹配
+python tools/query_data.py --projects 春节推广                  # 按项目名模糊匹配
+python tools/query_data.py --units 视频单元A                   # 按单元名模糊匹配
+python tools/query_data.py --list-dates                       # 列出所有有数据的日期
 ```
 
-| 退出码 | 含义 |
-|--------|------|
-| 0 | 执行成功（无论是否触发通知） |
-| 1 | 执行失败 |
+**`--list-dates` 返回格式：**
 
-stdout 输出 JSON（日志输出到 stderr），结构如下：
+```json
+{"dates": ["2026-03-16", "2026-03-13", "2026-03-12", "2026-03-11"]}
+```
+
+**查询返回格式（按 `--table` 参数决定包含哪些表，默认 all）：**
 
 ```json
 {
-  "status": "ok",
-  "triggered_count": 1,
-  "rules": [
-    {
-      "rule": "示例：ROI为0的项目",
-      "triggered": true,
-      "messages": [
-        "项目 咕友-伊心-7R-3.10-高C 消耗=40.26元 但ROI=0",
-        "项目 咕友-伊心-每次-3.10-新 消耗=34.55元 但ROI=0"
-      ]
-    },
-    {
-      "rule": "另一条规则",
-      "triggered": false,
-      "messages": []
-    }
-  ]
+  "date": "2026-03-16",
+  "accounts": [{ ... }, { ... }],
+  "projects": [{ ... }, { ... }],
+  "units": [{ ... }, { ... }]
 }
 ```
 
-字段说明：
-- `status`: `ok` 正常 / `no_data` 数据库无数据 / `no_rules` 无启用的规则 / `error` 执行出错
-- `triggered_count`: 触发的规则数量
-- `rules[].rule`: 规则名称
-- `rules[].triggered`: 是否触发
-- `rules[].messages`: 触发说明列表。同一条规则可能因不同原因触发多次，每条 message 描述一个具体的触发情况
+## 数据结构
 
-## 标准调用流程
+数据层级：**产品(app_name) → 账户 → 项目 → 单元**，层级之间一对多。每天每条记录唯一（UPSERT）。
 
-```bash
-cd /path/to/oceanengine_fetch && python fetch_data.py --headless && python check_rules.py
+### accounts 账户表
+
+```json
+{
+  "org_name": "天津乾飞科技有限公司",
+  "app_name": "丝话app",
+  "date": "2026-03-16",
+  "account_name": "伊心-丝话-安卓-每次付费-UBA-02-在投",
+  "account_id": "1825413509844062",
+  "account_status": "审核通过",
+  "account_budget": 15000.0,
+  "cost": 8876.09,
+  "daily_roi": 0.11,
+  "daily_pay_amount": 975.0,
+  "impressions": 140978.0,
+  "clicks": 2538.0,
+  "conversions": 37.0,
+  "avg_conversion_cost": 239.89
+}
 ```
 
-抓取成功后自动执行规则检查。如果抓取失败（退出码非0），不会执行规则检查。
+### projects 项目表
+
+```json
+{
+  "org_name": "天津乾飞科技有限公司",
+  "app_name": "丝话app",
+  "date": "2026-03-16",
+  "project_name": "丝话-伊心-7R-2.11-高-男",
+  "project_id": "7605498720495108159",
+  "status": "未投放",
+  "project_budget": 3000.0,
+  "cost": 502.95,
+  "daily_roi": 0.1,
+  "impressions": 5020.0,
+  "conversions": 2.0,
+  "avg_conversion_cost": 251.48
+}
+```
+
+### units 单元表
+
+```json
+{
+  "org_name": "天津乾飞科技有限公司",
+  "app_name": "丝话app",
+  "date": "2026-03-16",
+  "unit_name": "丝话-伊心-7R-2.11-高-男_鲁_02_11_15:01:23_2",
+  "unit_id": "7605504805607653419",
+  "status": "未投放",
+  "cost": 502.95,
+  "daily_roi": 0.1,
+  "daily_pay_amount": 49.8,
+  "impressions": 5020.0,
+  "clicks": 85.0,
+  "conversions": 2.0,
+  "avg_conversion_cost": 251.48
+}
+```
+
+## 标准流程
+
+```bash
+# 首次：手动登录
+python tools/login.py
+
+# 日常：抓取数据
+python tools/fetch_data.py --headless
+
+# 登录过期时（fetch_data 退出码 2）：重新登录后再抓取
+python tools/login.py && python tools/fetch_data.py --headless
+```
 
 ## 环境依赖
 
@@ -89,9 +135,3 @@ cd /path/to/oceanengine_fetch && python fetch_data.py --headless && python check
 pip install playwright openpyxl pyyaml
 playwright install chromium
 ```
-
-## 首次使用
-
-1. 先运行 `python login.py` 完成手动登录
-2. 之后即可用 `python fetch_data.py --headless` 无头抓取
-3. 登录过期时 fetch_data.py 返回退出码 2，重新运行 login.py 即可
